@@ -20,42 +20,52 @@ const BOT_DIR = process.env.MAKEFUN_BOT_DIR ?? '/bot';
 const OUTPUT_DIR = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
 
 const POST_FILE = 'POST.json';
-const POST_URL_RE = /^https:\/\/(www\.|mobile\.)?(x|twitter)\.com\/[^/\s]+\/status\/\d+$/;
+const POST_URL_RE =
+  /^https:\/\/(?:www\.|mobile\.)?(?:x|twitter)\.com\/(?<handle>[^/\s]+)\/status\/(?<id>\d+)$/;
 
+// Read POST.json and return the post's URL and status id, or exit 1 with a
+// clear error. The placeholder is refused outright so a run before boss
+// posts fails loudly instead of handing the grader a dead link.
+function readPost(): { url: string; statusId: string } {
+  const sourcePath = join(BOT_DIR, POST_FILE);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(sourcePath, 'utf8'));
+  } catch (err) {
+    console.error(`${POST_FILE} is not valid JSON: ${(err as Error).message}`);
+    process.exit(1);
+  }
+  const url = (parsed as { url?: unknown }).url;
+  if (typeof url === 'string' && url === 'PENDING-BOSS-POST') {
+    console.error(
+      `${POST_FILE} still holds the PENDING-BOSS-POST placeholder — ` +
+        'post the meme on X first, then put its address in POST.json',
+    );
+    process.exit(1);
+  }
+  if (!parsed || typeof parsed !== 'object' || typeof url !== 'string') {
+    console.error(`${POST_FILE} must be a JSON object with a string url`);
+    process.exit(1);
+  }
+  const match = url.match(POST_URL_RE);
+  if (!match?.groups) {
+    console.error(
+      `${POST_FILE} does not name an X post URL (https://x.com/<handle>/status/<id>) — ` +
+        'replace the PENDING-BOSS-POST placeholder with the real post address first',
+    );
+    process.exit(1);
+  }
+  // The entry is boss's own post: only @amanaj00123 may have posted it.
+  if (match.groups.handle !== 'amanaj00123') {
+    console.error(`${POST_FILE} must name a post by @amanaj00123 — refusing ${url}`);
+    process.exit(1);
+  }
+  return { url, statusId: match.groups.id };
+}
+
+const { url: postUrl, statusId } = readPost();
 const sourcePath = join(BOT_DIR, POST_FILE);
 const destPath = join(OUTPUT_DIR, POST_FILE);
-
-let parsed: unknown;
-try {
-  parsed = JSON.parse(readFileSync(sourcePath, 'utf8'));
-} catch (err) {
-  console.error(`${POST_FILE} is not valid JSON: ${(err as Error).message}`);
-  process.exit(1);
-}
-
-const postUrl = (parsed as { url?: unknown }).url;
-if (
-  !parsed ||
-  typeof parsed !== 'object' ||
-  typeof postUrl !== 'string' ||
-  !POST_URL_RE.test(postUrl)
-) {
-  console.error(
-    `${POST_FILE} does not name an X post URL (https://x.com/<handle>/status/<id>) — ` +
-      'replace the PENDING-BOSS-POST placeholder with the real post address first',
-  );
-  process.exit(1);
-}
-
-// The entry is boss's own post: only @amanaj00123 may have posted it.
-const handleMatch = postUrl.match(
-  /^https:\/\/(www\.|mobile\.)?(x|twitter)\.com\/([^/\s]+)\/status\/(\d+)$/,
-);
-if (!handleMatch || handleMatch[3] !== 'amanaj00123') {
-  console.error(`${POST_FILE} must name a post by @amanaj00123 — refusing ${postUrl}`);
-  process.exit(1);
-}
-const statusId = handleMatch[4];
 
 mkdirSync(OUTPUT_DIR, { recursive: true });
 copyFileSync(sourcePath, destPath);
